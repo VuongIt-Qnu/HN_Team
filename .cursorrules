@@ -1,0 +1,71 @@
+# VIBE CODING SKILL: WEB APP QUẢN LÝ BÁN HÀNG
+
+> **Mô tả**: Bộ quy chuẩn (Skill/Rules) dành cho AI Coding Assistant (Cursor, Windsurf, Claude Dev) để phát triển hệ thống Web App Quản lý Bán hàng chuyển đổi từ phiên bản Desktop v4.5.
+
+---
+
+## 1. TỔNG QUAN DỰ ÁN & MỤC TIÊU (PROJECT CONTEXT)
+
+- **Tên dự án**: Web App Quản lý Bán hàng, Kho hàng, Công nợ (Web Transformation v5.0)
+- **Mục tiêu**: Chuyển đổi toàn bộ 50 giao diện từ Desktop v4.5 sang Web Single Page Application (SPA), hỗ trợ phân quyền chi tiết (RBAC), chế độ bán hàng POS tốc độ cao và chuẩn hóa luồng kho/tài chính.
+
+---
+
+## 2. CÔNG NGHỆ SỬ DỤNG (TECH STACK)
+
+- **Frontend Framework**: Next.js 14+ (App Router), TypeScript.
+- **Styling & UI**: Tailwind CSS, Shadcn UI, Lucide Icons.
+- **State Management**: Zustand (Global state), TanStack Query / React Query (Server state).
+- **Backend API**: Node.js (NestJS) hoặc Next.js Route Handlers.
+- **Database & ORM**: PostgreSQL, Prisma ORM, Redis Cache.
+- **Authentication**: JWT (JSON Web Token), Bcrypt password hashing.
+
+---
+
+## 3. MA TRẬN PHÂN QUYỀN (RBAC RULES)
+
+Hệ thống bắt buộc áp dụng phân quyền dựa trên 6 Vai trò (Roles) chính:
+
+| Vai trò | Mã Role | URL Route Cho Phép | Thao tác Đặc biệt |
+| :--- | :--- | :--- | :--- |
+| **Giám đốc / Admin** | `ROOT_ADMIN` | `/*` (Tất cả các trang) | Toàn quyền tạo tài khoản, phân quyền, sửa/xóa dữ liệu |
+| **Quản lý Cửa hàng** | `STORE_MANAGER` | `/dashboard`, `/pos`, `/orders/*`, `/inventory/*`, `/reports/*` | Duyệt báo giá sỉ, duyệt phiếu kho chi nhánh |
+| **Kế toán** | `ACCOUNTANT` | `/dashboard`, `/finance/*`, `/reports/*`, `/orders/wholesale` | Quản lý sổ quỹ, công nợ, tính giá vốn, duyệt hoàn tiền |
+| **Thủ kho** | `WAREHOUSE` | `/inventory/*` | Lập & thực thi phiếu Nhập/Xuất/Chuyển/Kiểm kê kho (Ẩn giá vốn) |
+| **NV Bán hàng (POS)** | `POS_CASHIER` | `/pos`, `/orders/retail` | Quét mã vạch, bán lẻ (Khóa sửa giá, khóa xem giá vốn/lãi) |
+| **NV Kỹ thuật (Giao hàng – COD)** | `TECHNICIAN` | `/shipping/cod` (Mobile Route) | Giao hàng, cập nhật tiền thu hộ COD và **chụp ảnh hoàn thiện** cho đơn được gán (bắt buộc có ảnh trước khi hoàn tất) |
+
+---
+
+## 4. QUY CHUẨN LẬP TRÌNH (CODING CONVENTIONS)
+
+1. **Thành phần UI & State Rỗng**:
+   - Mọi trang danh sách khi chưa có dữ liệu phải render `EmptyState` component: *"Chưa có dữ liệu — Bấm [+ Tạo mới] để bắt đầu"*.
+   - Sử dụng Skeleton loaders khi đang fetch API.
+
+2. **Giao diện POS (`/pos`)**:
+   - Thi công dạng Fullscreen (ẩn Navbar/Sidebar chính).
+   - Tự động autofocus vào ô tìm kiếm sản phẩm.
+   - Hỗ trợ giỏ hàng đa đơn (Multi-tab orders).
+
+3. **Cấu trúc Thư mục chuẩn (Directory Structure)**:
+   ```text
+   src/
+   ├── app/                  # Next.js App Router (Pages & API)
+   │   ├── (auth)/login      # Trang Đăng nhập
+   │   ├── (dashboard)/      # Layout Admin & Dashboard
+   │   │   ├── admin/users   # Quản lý User & Phân quyền
+   │   │   ├── pos/          # Màn hình POS Thu ngân
+   │   │   ├── inventory/    # Quản lý Kho
+   │   │   └── finance/      # Sổ quỹ & Công nợ
+   ├── components/
+   │   ├── ui/               # Shadcn UI primitives (Button, Modal, Input...)
+   │   ├── features/         # Features components (POSCart, StockTable...)
+   │   └── shared/           # Header, Sidebar, EmptyState, RouteGuard
+   ├── lib/                  # Utils, Prisma client, Auth helpers
+   └── types/                # TypeScript Type definitions (RBAC, Orders...)
+   ```
+
+4. **An toàn & Bảo mật**:
+   - Kiểm tra JWT và danh sách `permissions` ở cả Middleware (Frontend) và Guard/Interceptor (Backend).
+   - Không truyền thông tin Giá vốn (Cost Price) về Frontend nếu tài khoản không có quyền `VIEW_COST_PRICE`.

@@ -1,0 +1,605 @@
+// ============================================================================
+// Prisma Schema - Web App Quan ly Ban hang HN Group v5.0 (PostgreSQL)
+// Tuong ung 1-1 voi Mock Data Layer trong src/lib/mock/db.ts
+//   npm run db:setup   (cai Prisma + generate + db push + seed)
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------- ENUMS -------------------------------------
+
+enum RoleCode {
+  ROOT_ADMIN
+  STORE_MANAGER
+  ACCOUNTANT
+  WAREHOUSE
+  POS_CASHIER
+  /// NV Ky thuat: giao hang COD + chup anh hoan thien
+  TECHNICIAN
+}
+
+enum PermissionCode {
+  MANAGE_USERS
+  EDIT_SELL_PRICE
+  VIEW_COST_PRICE
+  APPROVE_ORDER
+  APPROVE_STOCK
+  APPROVE_REFUND
+  DISCOUNT_OVER_LIMIT
+  MANAGE_CASHBOOK
+  MANAGE_DEBT
+  EXPORT_REPORT
+  DELETE_DATA
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  LOCKED
+}
+
+enum OrderChannel {
+  RETAIL
+  WHOLESALE
+  ONLINE
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING
+  CONFIRMED
+  DELIVERING
+  COMPLETED
+  RETURNED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  VIETQR
+  CARD
+  TRANSFER
+  COD
+}
+
+enum CustomerType {
+  RETAIL
+  WHOLESALE
+}
+
+enum StockOperationType {
+  IMPORT
+  EXPORT
+  TRANSFER
+  ADJUST
+}
+
+enum StockOperationStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  DONE
+  CANCELLED
+}
+
+enum StockAuditStatus {
+  COUNTING
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum CashbookType {
+  RECEIPT
+  PAYMENT
+}
+
+enum CashbookCategory {
+  SALE
+  DEBT_COLLECT
+  SUPPLIER_PAYMENT
+  SALARY
+  REFUND
+  OTHER_INCOME
+  OTHER_EXPENSE
+}
+
+enum CashbookStatus {
+  POSTED
+  WAITING_APPROVAL
+  REJECTED
+}
+
+enum CashbookMethod {
+  CASH
+  VIETQR
+  TRANSFER
+}
+
+enum DebtPartnerType {
+  CUSTOMER
+  SUPPLIER
+}
+
+enum DebtStatus {
+  OPEN
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+// --------------------------- DANH MUC NEN ----------------------------------
+
+model Store {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  address   String
+  phone     String
+  isMain    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  users            User[]
+  inventories      Inventory[]
+  orders           Order[]
+  cashbookEntries  CashbookEntry[]
+  stockOperations  StockOperation[] @relation("StockOperationStore")
+  transferTargets  StockOperation[] @relation("StockOperationTargetStore")
+  stockAudits      StockAudit[]
+
+  @@map("stores")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  products Product[]
+
+  @@map("categories")
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  phone     String
+  address   String
+  note      String?
+  createdAt DateTime @default(now())
+
+  products        Product[]
+  stockOperations StockOperation[]
+  debts           Debt[]
+
+  @@map("suppliers")
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  sku           String   @unique
+  barcode       String   @unique
+  name          String
+  unit          String
+  sellPrice     Decimal  @db.Decimal(18, 2)
+  /// Gia von: CHI tra ve API khi tai khoan co quyen VIEW_COST_PRICE
+  costPrice     Decimal  @db.Decimal(18, 2)
+  minStock      Int      @default(0)
+  allowDiscount Boolean  @default(true)
+  status        String   @default("ACTIVE")
+  categoryId    String
+  supplierId    String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  category  Category  @relation(fields: [categoryId], references: [id])
+  supplier  Supplier? @relation(fields: [supplierId], references: [id])
+  inventory Inventory[]
+  orderItems OrderItem[]
+  stockTransactions StockTransaction[]
+  stockOperationItems StockOperationItem[]
+  stockAuditItems StockAuditItem[]
+
+  /// Index phuc vu quet ma vach toc do cao o man hinh POS (F3)
+  @@index([barcode])
+  @@index([sku])
+  @@index([name])
+  @@index([categoryId])
+  @@map("products")
+}
+
+model Inventory {
+  id        String   @id @default(cuid())
+  storeId   String
+  productId String
+  quantity  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  store   Store   @relation(fields: [storeId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([storeId, productId])
+  @@index([productId])
+  @@map("inventories")
+}
+
+// --------------------- NGUOI DUNG & PHAN QUYEN (RBAC) ----------------------
+
+model Role {
+  id          String       @id @default(cuid())
+  code        RoleCode     @unique
+  name        String
+  description String?
+
+  users User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String         @id @default(cuid())
+  code        PermissionCode @unique
+  name        String
+  description String?
+
+  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
+
+  @@map("permissions")
+}
+
+/// Quyen mac dinh theo vai tro (tuong ung ROLE_DEFAULT_PERMISSIONS trong src/types/rbac.ts)
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id            String     @id @default(cuid())
+  username      String     @unique
+  passwordHash  String
+  fullName      String
+  phone         String
+  email         String?
+  roleId        String
+  roleCode      RoleCode
+  storeId       String
+  status        UserStatus @default(ACTIVE)
+  discountLimit Int        @default(10)
+  lastLoginAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  role      Role      @relation(fields: [roleId], references: [id])
+  store     Store     @relation(fields: [storeId], references: [id])
+  permissions UserPermission[]
+  routeAccess UserRouteAccess[]
+  orders    Order[]   @relation("OrderCashier")
+  /// Don duoc giao cho nhan vien ky thuat (giao hang COD)
+  deliveredOrders Order[] @relation("OrderShipper")
+  uploadedOrderPhotos OrderPhoto[] @relation("OrderPhotoUploader")
+  createdStockOperations StockOperation[] @relation("StockOperationCreator")
+  approvedStockOperations StockOperation[] @relation("StockOperationApprover")
+  createdStockAudits StockAudit[] @relation("StockAuditCreator")
+  approvedStockAudits StockAudit[] @relation("StockAuditApprover")
+  cashbookEntries CashbookEntry[] @relation("CashbookCreator")
+
+  @@index([username])
+  @@index([roleCode])
+  @@index([storeId])
+  @@map("users")
+}
+
+/// Quyen thao tac chi tiet cap cho tung tai khoan (checkbox "Quyền thao tác")
+model UserPermission {
+  userId       String
+  permissionId String
+  grantedAt    DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+  @@map("user_permissions")
+}
+
+/// URL Route duoc phep truy cap (checkbox theo tung trang, ho tro wildcard '/orders/*', '/*')
+model UserRouteAccess {
+  id        String   @id @default(cuid())
+  userId    String
+  routePath String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, routePath])
+  @@index([userId])
+  @@map("user_route_access")
+}
+
+// ------------------------------ DOI TAC -----------------------------------
+
+model Customer {
+  id        String       @id @default(cuid())
+  code      String       @unique
+  name      String
+  phone     String
+  address   String
+  type      CustomerType @default(RETAIL)
+  points    Int          @default(0)
+  note      String?
+  createdAt DateTime     @default(now())
+
+  orders Order[]
+  debts  Debt[]
+
+  @@index([name])
+  @@index([phone])
+  @@map("customers")
+}
+
+// ------------------------- BAN HANG & CONG NO ------------------------------
+
+model Order {
+  id              String        @id @default(cuid())
+  code            String        @unique
+  channel         OrderChannel  @default(RETAIL)
+  status          OrderStatus   @default(DRAFT)
+  customerId      String?
+  customerName    String
+  customerPhone   String?
+  storeId         String
+  subtotal        Decimal       @db.Decimal(18, 2)
+  discount        Decimal       @default(0) @db.Decimal(18, 2)
+  total           Decimal       @db.Decimal(18, 2)
+  paidAmount      Decimal       @default(0) @db.Decimal(18, 2)
+  changeAmount    Decimal       @default(0) @db.Decimal(18, 2)
+  debtAmount      Decimal       @default(0) @db.Decimal(18, 2)
+  paymentMethod   PaymentMethod @default(CASH)
+  cashierId       String
+  note            String?
+  codAmount       Decimal?      @db.Decimal(18, 2)
+  shipperId       String?
+  deliveryAddress String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  store    Store       @relation(fields: [storeId], references: [id])
+  cashier  User        @relation("OrderCashier", fields: [cashierId], references: [id])
+  shipper  User?       @relation("OrderShipper", fields: [shipperId], references: [id])
+  items    OrderItem[]
+  /// Anh hoan thien (minh chung giao hang) - bat buoc co truoc khi don COD hoan tat
+  photos   OrderPhoto[]
+
+  /// Index cho man hinh POS / danh sach don / giao hang COD
+  @@index([code])
+  @@index([status])
+  @@index([channel])
+  @@index([paymentMethod])
+  @@index([customerId])
+  @@index([storeId])
+  @@index([shipperId])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String
+  sku       String
+  name      String
+  unit      String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(18, 2)
+  discount  Decimal @default(0) @db.Decimal(18, 2)
+  lineTotal Decimal @db.Decimal(18, 2)
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+/// Anh hoan thien cong viec (minh chung giao hang / nghiem thu) do Nhan vien ky thuat tai len.
+/// File anh duoc luu tren dia tai `uploads/orders/<orderId>/...`; ban ghi chi luu duong dan + metadata.
+model OrderPhoto {
+  id           String   @id @default(cuid())
+  orderId      String
+  uploadedById String
+  /// Duong dan tuong doi trong thu muc upload, vi du: orders/od_0006/1730000000-ab12cd.jpg
+  path         String   @unique
+  fileName     String
+  mimeType     String
+  size         Int
+  note         String?
+  createdAt    DateTime @default(now())
+
+  order      Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  uploadedBy User  @relation("OrderPhotoUploader", fields: [uploadedById], references: [id])
+
+  @@index([orderId])
+  @@index([uploadedById])
+  @@index([createdAt])
+  @@map("order_photos")
+}
+
+// --------------------------- SO QUY & CONG NO ------------------------------
+
+model CashbookEntry {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  type        CashbookType
+  category    CashbookCategory
+  status      CashbookStatus   @default(POSTED)
+  amount      Decimal          @db.Decimal(18, 2)
+  method      CashbookMethod   @default(CASH)
+  storeId     String
+  partnerName String?
+  refCode     String?
+  description String
+  createdBy   String
+  approvedBy  String?
+  createdAt   DateTime         @default(now())
+
+  store   Store @relation(fields: [storeId], references: [id])
+  creator User  @relation("CashbookCreator", fields: [createdBy], references: [id])
+
+  @@index([type])
+  @@index([status])
+  @@index([storeId])
+  @@index([createdAt])
+  @@map("cashbook_entries")
+}
+
+model Debt {
+  id                String          @id @default(cuid())
+  partnerType       DebtPartnerType
+  customerId        String?
+  supplierId        String?
+  partnerCode       String
+  partnerName       String
+  phone             String
+  totalDebt         Decimal         @db.Decimal(18, 2)
+  paidAmount        Decimal         @default(0) @db.Decimal(18, 2)
+  dueDate           DateTime
+  status            DebtStatus      @default(OPEN)
+  note              String?
+  lastTransactionAt DateTime        @default(now())
+  createdAt         DateTime        @default(now())
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+
+  @@index([partnerType])
+  @@index([status])
+  @@index([dueDate])
+  @@map("debts")
+}
+
+// ------------------------------- KHO ---------------------------------------
+
+model StockOperation {
+  id            String               @id @default(cuid())
+  code          String               @unique
+  type          StockOperationType
+  status        StockOperationStatus @default(PENDING)
+  storeId       String
+  toStoreId     String?
+  supplierId    String?
+  reason        String?
+  totalQuantity Int                  @default(0)
+  createdBy     String
+  approvedBy    String?
+  createdAt     DateTime             @default(now())
+  approvedAt    DateTime?
+
+  store        Store                @relation("StockOperationStore", fields: [storeId], references: [id])
+  toStore      Store?               @relation("StockOperationTargetStore", fields: [toStoreId], references: [id])
+  supplier     Supplier?            @relation(fields: [supplierId], references: [id])
+  creator      User                 @relation("StockOperationCreator", fields: [createdBy], references: [id])
+  approver     User?                @relation("StockOperationApprover", fields: [approvedBy], references: [id])
+  items        StockOperationItem[]
+  transactions StockTransaction[]
+
+  @@index([type])
+  @@index([status])
+  @@index([storeId])
+  @@index([createdAt])
+  @@map("stock_operations")
+}
+
+model StockOperationItem {
+  id          String  @id @default(cuid())
+  operationId String
+  productId   String
+  quantity    Int
+  costPrice   Decimal @db.Decimal(18, 2)
+  note        String?
+
+  operation StockOperation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  product   Product        @relation(fields: [productId], references: [id])
+
+  @@index([operationId])
+  @@index([productId])
+  @@map("stock_operation_items")
+}
+
+/// The kho: ghi nhan moi bien dong nhap/xuat/chuyen/dieu chinh
+model StockTransaction {
+  id            String             @id @default(cuid())
+  productId     String
+  storeId       String
+  operationId   String?
+  type          StockOperationType
+  quantity      Int
+  quantityAfter Int
+  costPrice     Decimal?           @db.Decimal(18, 2)
+  createdAt     DateTime           @default(now())
+
+  product   Product         @relation(fields: [productId], references: [id])
+  store     Store           @relation(fields: [storeId], references: [id])
+  operation StockOperation? @relation(fields: [operationId], references: [id])
+
+  @@index([productId])
+  @@index([storeId])
+  @@index([createdAt])
+  @@map("stock_transactions")
+}
+
+model StockAudit {
+  id         String           @id @default(cuid())
+  code       String           @unique
+  storeId    String
+  status     StockAuditStatus @default(COUNTING)
+  note       String?
+  createdBy  String
+  approvedBy String?
+  createdAt  DateTime         @default(now())
+
+  store    Store            @relation(fields: [storeId], references: [id])
+  creator  User             @relation("StockAuditCreator", fields: [createdBy], references: [id])
+  approver User?            @relation("StockAuditApprover", fields: [approvedBy], references: [id])
+  items    StockAuditItem[]
+
+  @@index([status])
+  @@index([storeId])
+  @@map("stock_audits")
+}
+
+model StockAuditItem {
+  id         String  @id @default(cuid())
+  auditId    String
+  productId  String
+  systemQty  Int
+  countedQty Int
+  diffQty    Int
+  note       String?
+
+  audit   StockAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  product Product    @relation(fields: [productId], references: [id])
+
+  @@index([auditId])
+  @@index([productId])
+  @@map("stock_audit_items")
+}
+
+
